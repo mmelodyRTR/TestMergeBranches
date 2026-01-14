@@ -1,0 +1,25 @@
+name: Production Deployment Pipeline
+
+on:
+  workflow_dispatch: # Allows manual triggering for testing
+
+jobs:
+  # Job 1: Build and Test
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Dummy Build
+        run: echo "Compiling code and running tests..."
+
+  # Job 2: Deploy to Staging (Automatic)
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: 
+      name: dev
+    steps:
+      - name: Deploy to Staging
+        run: echo "Deploying to Staging Server..."
