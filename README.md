@@ -1,3 +1,1 @@
 # TestMergeBranches
-
-FooBar
