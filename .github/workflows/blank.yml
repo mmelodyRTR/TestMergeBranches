@@ -1,25 +1,87 @@
-# This is a basic workflow to help you get started with Actions
+name: "App-Powered ChatOps Merge"
 
-name: CI Test
 on:
-  pull_request:
-    branches: [ "main" ]
+  issue_comment:
+    types: [created]
 
-  # Allows you to run this workflow manually from the Actions tab
-  workflow_dispatch:
+permissions:
+  # We still need read access to see the workflow file itself
+  contents: read
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  bypass-merge:
+    name: App Bypass Merge
     runs-on: ubuntu-latest
+    
+    # 1. Trigger Check
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/bypass')
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      # --- NEW STEP: Authenticate as the App ---
+      - name: Generate Bot Token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.BYPASS_APP_ID }}
+          private-key: ${{ secrets.BYPASS_APP_CLIENT_KEY }}
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: cat commit_2.txt
+      # --- EXECUTE: Use the App Token ---
+      - name: Execute Merge
+        uses: actions/github-script@v7
+        with:
+          # IMPORTANT: We use the token generated in the previous step
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const prNumber = context.issue.number;
+            const actor = context.actor;
+            const org = context.repo.owner;
+            const repo = context.repo.repo;
+            const commentBody = context.payload.comment.body;
+
+            console.log(`Processing bypass request from @${actor}`);
+
+            // 1. Extract Reason
+            const reason = commentBody.replace('/bypass', '').trim();
+            if (!reason) console.log("Warning: No reason provided.");
+
+            // 2. Prepare Audit Message
+            const { data: pr } = await github.rest.pulls.get({
+              owner: org, repo: repo, pull_number: prNumber
+            });
+
+            const commitMessage = [
+              `BYPASS MERGE`,
+              `----------------`,
+              `Triggered by: @${actor}`,
+              `Reason: ${reason || "None"}`,
+              ``,
+              `Original Title: ${pr.title}`
+            ].join('\n');
+
+            // 3. Execute Merge (Using App Token)
+            try {
+              await github.rest.pulls.merge({
+                owner: org,
+                repo: repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `Bypass Merge: PR #${prNumber}`,
+                commit_message: commitMessage
+              });
+
+              // 4. Success Comment
+              await github.rest.issues.createComment({
+                owner: org, repo: repo, issue_number: prNumber,
+                body: `✅ **Bypassed!**\n\nMerged by **${{ steps.app-token.outputs.app-slug }}** on behalf of @${actor}.`
+              });
+
+            } catch (error) {
+              console.error(error);
+              await github.rest.issues.createComment({
+                owner: org, repo: repo, issue_number: prNumber,
+                body: `⚠️ **Bypass Failed**: ${error.message}`
+              });
+              core.setFailed(`Merge execution failed: ${error.message}`);
+            }
