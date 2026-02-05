@@ -1,0 +1,85 @@
+name: "POC: Simple ChatOps Merge"
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write      # Required to merge code
+  pull-requests: write # Required to comment on the PR
+  issues: write        # Required to read/write comments
+
+jobs:
+  chatops-merge:
+    name: ChatOps Merge
+    runs-on: ubuntu-latest
+    
+    # 1. Safety Check: Is this a PR? Does comment start with /bypass?
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/bypass')
+
+    steps:
+      - name: Execute Merge
+        uses: actions/github-script@v7
+        with:
+          # We use the standard built-in token
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // --- INPUTS ---
+            const prNumber = context.issue.number;
+            const actor = context.actor;
+            const org = context.repo.owner;
+            const repo = context.repo.repo;
+            const commentBody = context.payload.comment.body;
+
+            console.log(`POC: Processing merge request from @${actor}`);
+
+            // 1. EXTRACT REASON
+            const reason = commentBody.replace('/bypass', '').trim();
+            
+            if (reason.length < 1) {
+               console.log("No reason provided, but strictly speaking this is just a merge POC.");
+               // optional: fail here if you still want to enforce the 'reason' requirement
+            }
+
+            // 2. GET PR DETAILS (for audit log simulation)
+            const { data: pr } = await github.rest.pulls.get({
+              owner: org, repo: repo, pull_number: prNumber
+            });
+
+            // 3. CONSTRUCT COMMIT MESSAGE
+            const commitMessage = [
+              `CHATOPS MERGE`,
+              `----------------`,
+              `Triggered by: @${actor}`,
+              `Reason: ${reason || "No reason provided"}`,
+              ``,
+              `Original Title: ${pr.title}`
+            ].join('\n');
+
+            // 4. EXECUTE MERGE
+            try {
+              await github.rest.pulls.merge({
+                owner: org,
+                repo: repo,
+                pull_number: prNumber,
+                merge_method: 'squash',
+                commit_title: `ChatOps Merge: PR #${prNumber}`,
+                commit_message: commitMessage
+              });
+
+              // 5. SUCCESS COMMENT
+              await github.rest.issues.createComment({
+                owner: org, repo: repo, issue_number: prNumber,
+                body: `✅ **Merged!**\n\nTriggered via ChatOps by @${actor}.`
+              });
+
+            } catch (error) {
+              console.error(error);
+              await github.rest.issues.createComment({
+                owner: org, repo: repo, issue_number: prNumber,
+                body: `⚠️ **Merge Failed**: ${error.message}`
+              });
+              core.setFailed(`Merge execution failed: ${error.message}`);
+            }
