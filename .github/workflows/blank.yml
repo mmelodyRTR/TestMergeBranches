@@ -1,25 +1,22 @@
-name: "App-Powered ChatOps Merge"
+name: "Structured ChatOps Bypass"
 
 on:
   issue_comment:
     types: [created]
 
 permissions:
-  # We still need read access to see the workflow file itself
   contents: read
 
 jobs:
   bypass-merge:
-    name: App Bypass Merge
+    name: Validate & Execute
     runs-on: ubuntu-latest
     
-    # 1. Trigger Check
     if: |
       github.event.issue.pull_request &&
       startsWith(github.event.comment.body, '/bypass')
 
     steps:
-      # --- NEW STEP: Authenticate as the App ---
       - name: Generate Bot Token
         uses: actions/create-github-app-token@v1
         id: app-token
@@ -27,61 +24,114 @@ jobs:
           app-id: ${{ secrets.BYPASS_APP_ID }}
           private-key: ${{ secrets.BYPASS_APP_CLIENT_KEY }}
 
-      # --- EXECUTE: Use the App Token ---
-      - name: Execute Merge
+      - name: Process ChatOps
         uses: actions/github-script@v7
         with:
-          # IMPORTANT: We use the token generated in the previous step
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
+            // --- CONFIGURATION ---
+            const ALLOWED_CATEGORIES = ['HOTFIX', 'STAGE_BROKE', 'INCIDENT'];
+            const MIN_REASON_LENGTH = 20;
+            // ---------------------
+
             const prNumber = context.issue.number;
-            const actor = context.actor;
-            const org = context.repo.owner;
-            const repo = context.repo.repo;
-            const commentBody = context.payload.comment.body;
+            const commentBody = context.payload.comment.body.trim();
 
-            console.log(`Processing bypass request from @${actor}`);
+            // --- 0. HELP COMMAND INTERCEPT ---
+            // If user types "/bypass help" or "/bypass --help", show instructions and exit.
+            if (commentBody === '/bypass help' || commentBody === '/bypass --help') {
+              const helpMessage = [
+                `👋 **Bypass Bot Help**`,
+                ``,
+                `To bypass branch protections, use the following format:`,
+                `\`/bypass --ticket=<ID> --category=<TYPE> --reason="<TEXT>"\``,
+                ``,
+                `**Required Flags:**`,
+                `- \`--ticket\`: Jira ID (e.g., PROJ-123)`,
+                `- \`--category\`: One of [${ALLOWED_CATEGORIES.map(c => `\`${c}\``).join(', ')}]`,
+                `- \`--reason\`: A description (min ${MIN_REASON_LENGTH} chars)`,
+                ``,
+                `**Example:**`,
+                `\`/bypass --ticket=OPS-123 --category=HOTFIX --reason="Fixing P0 production outage"\``
+              ].join('\n');
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: helpMessage
+              });
+              console.log("Help message posted.");
+              return; // EXIT SCRIPT HERE
+            }
 
-            // 1. Extract Reason
-            const reason = commentBody.replace('/bypass', '').trim();
-            if (!reason) console.log("Warning: No reason provided.");
+            // --- 1. PARSE ARGUMENTS ---
+            const args = {};
+            // Regex to capture --key=value or --key="value with spaces"
+            const regex = /--([a-zA-Z0-9_-]+)=(?:"([^"]*)"|([^\s]*))/g;
+            let match;
 
-            // 2. Prepare Audit Message
+            while ((match = regex.exec(commentBody)) !== null) {
+              const key = match[1].toLowerCase();
+              const value = match[2] || match[3]; 
+              args[key] = value;
+            }
+
+            // --- 2. VALIDATION HELPER ---
+            async function failBypass(errorMsg) {
+              const body = `❌ **Bypass Failed**: ${errorMsg}\n\nType \`/bypass help\` for usage instructions.`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: body
+              });
+              core.setFailed(errorMsg);
+            }
+
+            // --- 3. VALIDATE INPUTS ---
+            if (!args.ticket) return failBypass("Missing `--ticket` flag.");
+            if (!args.category) return failBypass("Missing `--category` flag.");
+            if (!args.reason) return failBypass("Missing `--reason` flag.");
+
+            const inputTicket = args.ticket.toUpperCase();
+            const inputCategory = args.category.toUpperCase();
+            const inputReason = args.reason;
+            
+            // Validate Category
+            if (!ALLOWED_CATEGORIES.includes(inputCategory)) {
+              return failBypass(`Invalid Category '${inputCategory}'. Allowed: ${ALLOWED_CATEGORIES.join(', ')}`);
+            }
+            
+            // Validate Reason Length
+            if (inputReason.length < MIN_REASON_LENGTH) {
+              return failBypass(`Reason is too short. Must be at least ${MIN_REASON_LENGTH} characters.`);
+            }
+
+            // --- 4. EXECUTE MERGE ---
             const { data: pr } = await github.rest.pulls.get({
-              owner: org, repo: repo, pull_number: prNumber
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber
             });
 
-            const commitMessage = [
+            const auditMessage = [
               `BYPASS MERGE`,
               `----------------`,
-              `Triggered by: @${actor}`,
-              `Reason: ${reason || "None"}`,
-              ``,
+              `User: @${context.actor}`,
+              `Ticket: ${inputTicket}`,
+              `Category: ${inputCategory}`,
+              `Reason: ${inputReason}`,
               `Original Title: ${pr.title}`
             ].join('\n');
 
-            // 3. Execute Merge (Using App Token)
             try {
               await github.rest.pulls.merge({
-                owner: org,
-                repo: repo,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
                 pull_number: prNumber,
                 merge_method: 'squash',
-                commit_title: `Bypass Merge: PR #${prNumber}`,
-                commit_message: commitMessage
+                commit_title: `Bypass: ${inputTicket} (${inputCategory})`,
+                commit_message: auditMessage
               });
 
-              // 4. Success Comment
               await github.rest.issues.createComment({
-                owner: org, repo: repo, issue_number: prNumber,
-                body: `✅ **Bypassed!**\n\nMerged by **${{ steps.app-token.outputs.app-slug }}** on behalf of @${actor}.`
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+                body: `✅ **Bypassed!**\n\nMerged PR #${prNumber} for ticket ${inputTicket}.`
               });
 
             } catch (error) {
-              console.error(error);
-              await github.rest.issues.createComment({
-                owner: org, repo: repo, issue_number: prNumber,
-                body: `⚠️ **Bypass Failed**: ${error.message}`
-              });
-              core.setFailed(`Merge execution failed: ${error.message}`);
+              await failBypass(`Merge failed: ${error.message}`);
             }
