@@ -1,0 +1,100 @@
+name: "Daily Bypass Report"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Search for Bypass Commits from the last 24 hours
+      - name: Find Bypass Commits
+        id: search
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Calculate timestamp for 24 hours ago (YYYY-MM-DD)
+          DATE_SINCE=$(date -d "24 hours ago" +%Y-%m-%dT%H:%M:%S)
+          echo "Searching for commits since: $DATE_SINCE"
+
+          # Search for our unique signature "BYPASS MERGE"
+          # Output specific fields as JSON
+          gh search commits "BYPASS MERGE" \
+            --repo ${{ github.repository }} \
+            --committer-date ">$DATE_SINCE" \
+            --json commit,sha,author \
+            > raw_commits.json
+          
+          echo "Found $(jq length raw_commits.json) bypass events."
+
+      # 2. Extract Details & Save to CSV (Using Python for robust text parsing)
+      - name: Parse and Create CSV
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Generate CSV
+        run: |
+          python3 -c "
+          import json
+          import csv
+          import re
+          import sys
+
+          # Load the raw commit data
+          with open('raw_commits.json', 'r') as f:
+              commits = json.load(f)
+
+          # Define the CSV headers
+          headers = ['Date', 'Actor', 'Ticket', 'Category', 'Reason', 'Commit SHA']
+          
+          # Regex patterns to find our key-value pairs in the text
+          # Matches 'Ticket: PROJ-123'
+          patterns = {
+              'Ticket': re.compile(r'Ticket:\s*(.*)', re.IGNORECASE),
+              'Category': re.compile(r'Category:\s*(.*)', re.IGNORECASE),
+              'Reason': re.compile(r'Reason:\s*(.*)', re.IGNORECASE),
+              'User': re.compile(r'User:\s*@?([a-zA-Z0-9-]+)', re.IGNORECASE)
+          }
+
+          with open('bypass_report.csv', 'w', newline='') as csvfile:
+              writer = csv.writer(csvfile)
+              writer.writerow(headers)
+
+              for c in commits:
+                  msg = c['commit']['message']
+                  
+                  # Default values if parsing fails
+                  data = {'Ticket': 'N/A', 'Category': 'N/A', 'Reason': 'N/A', 'User': c['author']['login']}
+                  
+                  # Extract fields using regex
+                  for key, pattern in patterns.items():
+                      match = pattern.search(msg)
+                      if match:
+                          data[key] = match.group(1).strip()
+
+                  # Write row
+                  writer.writerow([
+                      c['commit']['author']['date'],
+                      data['User'],
+                      data['Ticket'],
+                      data['Category'],
+                      data['Reason'],
+                      c['sha']
+                  ])
+
+          print(f'Successfully processed {len(commits)} rows into bypass_report.csv')
+          "
+
+      # 3. Upload the CSV so you can download it from the Actions tab
+      - name: Upload Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-bypass-report
+          path: bypass_report.csv
