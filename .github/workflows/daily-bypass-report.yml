@@ -1,4 +1,4 @@
-name: "Daily Bypass Report"
+name: "Manual Bypass Report"
 
 on:
   workflow_dispatch:
@@ -19,12 +19,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Calculate timestamp for 24 hours ago (YYYY-MM-DD)
+          # Calculate timestamp for 24 hours ago
           DATE_SINCE=$(date -d "24 hours ago" +%Y-%m-%dT%H:%M:%S)
           echo "Searching for commits since: $DATE_SINCE"
 
           # Search for our unique signature "BYPASS MERGE"
-          # Output specific fields as JSON
           gh search commits "BYPASS MERGE" \
             --repo ${{ github.repository }} \
             --committer-date ">$DATE_SINCE" \
@@ -33,68 +32,81 @@ jobs:
           
           echo "Found $(jq length raw_commits.json) bypass events."
 
-      # 2. Extract Details & Save to CSV (Using Python for robust text parsing)
-      - name: Parse and Create CSV
+      # 2. Parse Data & Generate Report (CSV + Markdown)
+      - name: Process Report
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Generate CSV
+      - name: Generate Output
         run: |
           python3 -c "
           import json
           import csv
           import re
-          import sys
+          import os
 
-          # Load the raw commit data
-          with open('raw_commits.json', 'r') as f:
-              commits = json.load(f)
+          # Load raw data
+          try:
+              with open('raw_commits.json', 'r') as f:
+                  commits = json.load(f)
+          except FileNotFoundError:
+              commits = []
 
-          # Define the CSV headers
+          # Define Headers
           headers = ['Date', 'Actor', 'Ticket', 'Category', 'Reason', 'Commit SHA']
           
-          # Regex patterns to find our key-value pairs in the text
-          # Matches 'Ticket: PROJ-123'
+          # Regex patterns (matching your commit message format)
           patterns = {
               'Ticket': re.compile(r'Ticket:\s*(.*)', re.IGNORECASE),
               'Category': re.compile(r'Category:\s*(.*)', re.IGNORECASE),
-              'Reason': re.compile(r'Reason:\s*(.*)', re.IGNORECASE),
-              'User': re.compile(r'User:\s*@?([a-zA-Z0-9-]+)', re.IGNORECASE)
+              'Reason': re.compile(r'Reason:\s*(.*)', re.IGNORECASE)
           }
 
+          rows = []
+
+          # Parse Commits
+          for c in commits:
+              msg = c['commit']['message']
+              user = c['commit']['author']['name']
+              date = c['commit']['author']['date']
+              sha = c['sha'][:7] # Short SHA
+              
+              # Extract details
+              data = {'Ticket': 'N/A', 'Category': 'N/A', 'Reason': 'N/A'}
+              for key, pattern in patterns.items():
+                  match = pattern.search(msg)
+                  if match:
+                      data[key] = match.group(1).strip()
+
+              rows.append([date, user, data['Ticket'], data['Category'], data['Reason'], sha])
+
+          # A. Write to CSV (File)
           with open('bypass_report.csv', 'w', newline='') as csvfile:
               writer = csv.writer(csvfile)
               writer.writerow(headers)
+              writer.writerows(rows)
 
-              for c in commits:
-                  msg = c['commit']['message']
+          # B. Write to GitHub Job Summary (Markdown)
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## 🚨 Daily Bypass Report\n')
+              summary.write(f'**Total Bypasses (Last 24h):** {len(rows)}\n\n')
+              
+              if len(rows) > 0:
+                  # Create Markdown Table Header
+                  summary.write('| ' + ' | '.join(headers) + ' |\n')
+                  summary.write('| ' + ' | '.join(['---'] * len(headers)) + ' |\n')
                   
-                  # Default values if parsing fails
-                  data = {'Ticket': 'N/A', 'Category': 'N/A', 'Reason': 'N/A', 'User': c['author']['login']}
-                  
-                  # Extract fields using regex
-                  for key, pattern in patterns.items():
-                      match = pattern.search(msg)
-                      if match:
-                          data[key] = match.group(1).strip()
-
-                  # Write row
-                  writer.writerow([
-                      c['commit']['author']['date'],
-                      data['User'],
-                      data['Ticket'],
-                      data['Category'],
-                      data['Reason'],
-                      c['sha']
-                  ])
-
-          print(f'Successfully processed {len(commits)} rows into bypass_report.csv')
+                  # Create Markdown Table Rows
+                  for row in rows:
+                      summary.write('| ' + ' | '.join(row) + ' |\n')
+              else:
+                  summary.write('✅ No bypasses found in the last 24 hours.\n')
           "
 
-      # 3. Upload the CSV so you can download it from the Actions tab
-      - name: Upload Report Artifact
+      # 3. (Optional) Still upload the CSV as a file for download
+      - name: Upload CSV Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: daily-bypass-report
+          name: bypass-report-csv
           path: bypass_report.csv
