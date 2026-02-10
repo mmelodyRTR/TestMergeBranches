@@ -1,0 +1,40 @@
+name: "Required Test Suite"
+
+on:
+  pull_request:
+
+jobs:
+  # JOB 1: API Tests
+  api-tests:
+    name: required-tests/api-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Branch Name
+        run: |
+          HEAD_BRANCH="${{ github.head_ref }}"
+          echo "Source Branch: $HEAD_BRANCH"
+
+          # Check if the branch starts with 'release-please--'
+          if [[ "$HEAD_BRANCH" == release-please--* ]]; then
+            echo "❌ Blocked: This is a Release Please branch."
+            exit 1
+          else
+            echo "✅ Passed: Standard feature branch."
+            exit 0
+          fi
+
+  e2e-tests:
+    name: required-tests/end-to-end-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate Branch Name
+        run: |
+          HEAD_BRANCH="${{ github.head_ref }}"
+          
+          if [[ "$HEAD_BRANCH" == release-please--* ]]; then
+            echo "❌ Blocked: Release Please branch detected."
+            exit 1
+          else
+            echo "✅ Passed."
+            exit 0
+          fi

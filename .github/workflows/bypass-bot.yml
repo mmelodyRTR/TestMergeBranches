@@ -30,15 +30,14 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             // --- CONFIGURATION ---
-            const ALLOWED_CATEGORIES = ['HOTFIX', 'STAGE_BROKE', 'INCIDENT'];
+            const ALLOWED_CATEGORIES = ['HOTFIX', 'SECURITY', 'INFRA'];
             const MIN_REASON_LENGTH = 20;
             // ---------------------
 
             const prNumber = context.issue.number;
             const commentBody = context.payload.comment.body.trim();
 
-            // --- 0. HELP COMMAND INTERCEPT ---
-            // If user types "/bypass help" or "/bypass --help", show instructions and exit.
+            // --- 0. HELP COMMAND ---
             if (commentBody === '/bypass help' || commentBody === '/bypass --help') {
               const helpMessage = [
                 `👋 **Bypass Bot Help**`,
@@ -48,23 +47,18 @@ jobs:
                 ``,
                 `**Required Flags:**`,
                 `- \`--ticket\`: Jira ID (e.g., PROJ-123)`,
-                `- \`--category\`: One of [${ALLOWED_CATEGORIES.map(c => `\`${c}\``).join(', ')}]`,
+                `- \`--category\`: One of [${ALLOWED_CATEGORIES.join(', ')}]`,
                 `- \`--reason\`: A description (min ${MIN_REASON_LENGTH} chars)`,
-                ``,
-                `**Example:**`,
-                `\`/bypass --ticket=OPS-123 --category=HOTFIX --reason="Fixing P0 production outage"\``
               ].join('\n');
               
               await github.rest.issues.createComment({
                 owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: helpMessage
               });
-              console.log("Help message posted.");
-              return; // EXIT SCRIPT HERE
+              return;
             }
 
             // --- 1. PARSE ARGUMENTS ---
             const args = {};
-            // Regex to capture --key=value or --key="value with spaces"
             const regex = /--([a-zA-Z0-9_-]+)=(?:"([^"]*)"|([^\s]*))/g;
             let match;
 
@@ -92,29 +86,30 @@ jobs:
             const inputCategory = args.category.toUpperCase();
             const inputReason = args.reason;
             
-            // Validate Category
             if (!ALLOWED_CATEGORIES.includes(inputCategory)) {
               return failBypass(`Invalid Category '${inputCategory}'. Allowed: ${ALLOWED_CATEGORIES.join(', ')}`);
             }
-            
-            // Validate Reason Length
             if (inputReason.length < MIN_REASON_LENGTH) {
               return failBypass(`Reason is too short. Must be at least ${MIN_REASON_LENGTH} characters.`);
             }
 
             // --- 4. EXECUTE MERGE ---
+            
+            // A. Fetch the Original PR Title
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber
             });
 
-            const auditMessage = [
+            // B. Construct the Commit Body (The Audit Log)
+            // Note: We use "BYPASS MERGE" as the unique signature for your report tool to find later.
+            const commitBody = [
               `BYPASS MERGE`,
               `----------------`,
               `User: @${context.actor}`,
               `Ticket: ${inputTicket}`,
               `Category: ${inputCategory}`,
               `Reason: ${inputReason}`,
-              `Original Title: ${pr.title}`
+              `Date: ${new Date().toISOString()}`
             ].join('\n');
 
             try {
@@ -123,8 +118,10 @@ jobs:
                 repo: context.repo.repo,
                 pull_number: prNumber,
                 merge_method: 'squash',
-                commit_title: `Bypass: ${inputTicket} (${inputCategory})`,
-                commit_message: auditMessage
+                // C. USE ORIGINAL PR TITLE
+                commit_title: pr.title, 
+                // D. USE CONSTRUCTED BODY
+                commit_message: commitBody 
               });
 
               await github.rest.issues.createComment({
