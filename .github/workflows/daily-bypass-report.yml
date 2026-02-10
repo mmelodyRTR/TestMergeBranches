@@ -46,17 +46,15 @@ jobs:
           import re
           import os
 
-          # Load raw data
           try:
               with open('raw_commits.json', 'r') as f:
                   commits = json.load(f)
           except FileNotFoundError:
               commits = []
 
-          # Define Headers
-          headers = ['Date', 'Actor', 'Ticket', 'Category', 'Reason', 'Commit SHA']
+          # 1. ADD 'Title' TO HEADERS
+          headers = ['Date', 'Actor', 'Ticket', 'Category', 'Reason', 'Title', 'Commit SHA']
           
-          # Regex patterns (matching your commit message format)
           patterns = {
               'Ticket': re.compile(r'Ticket:\s*(.*)', re.IGNORECASE),
               'Category': re.compile(r'Category:\s*(.*)', re.IGNORECASE),
@@ -65,43 +63,43 @@ jobs:
 
           rows = []
 
-          # Parse Commits
           for c in commits:
-              msg = c['commit']['message']
+              full_msg = c['commit']['message']
               user = c['commit']['author']['name']
               date = c['commit']['author']['date']
-              sha = c['sha'][:7] # Short SHA
+              sha = c['sha'][:7]
               
-              # Extract details
+              # 2. EXTRACT TITLE (First line of the commit message)
+              # The 'splitlines()[0]' grabs just the PR Title
+              title = full_msg.splitlines()[0] if full_msg else 'N/A'
+
               data = {'Ticket': 'N/A', 'Category': 'N/A', 'Reason': 'N/A'}
               for key, pattern in patterns.items():
-                  match = pattern.search(msg)
+                  match = pattern.search(full_msg)
                   if match:
                       data[key] = match.group(1).strip()
 
-              rows.append([date, user, data['Ticket'], data['Category'], data['Reason'], sha])
+              # 3. ADD TITLE TO ROW
+              rows.append([date, user, data['Ticket'], data['Category'], data['Reason'], title, sha])
 
-          # A. Write to CSV (File)
+          # Write CSV
           with open('bypass_report.csv', 'w', newline='') as csvfile:
               writer = csv.writer(csvfile)
               writer.writerow(headers)
               writer.writerows(rows)
 
-          # B. Write to GitHub Job Summary (Markdown)
+          # Write Job Summary
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
               summary.write('## 🚨 Daily Bypass Report\n')
               summary.write(f'**Total Bypasses (Last 24h):** {len(rows)}\n\n')
               
               if len(rows) > 0:
-                  # Create Markdown Table Header
                   summary.write('| ' + ' | '.join(headers) + ' |\n')
                   summary.write('| ' + ' | '.join(['---'] * len(headers)) + ' |\n')
-                  
-                  # Create Markdown Table Rows
                   for row in rows:
                       summary.write('| ' + ' | '.join(row) + ' |\n')
               else:
-                  summary.write('✅ No bypasses found in the last 24 hours.\n')
+                  summary.write('✅ No bypasses found.\n')
           "
 
       # 3. (Optional) Still upload the CSV as a file for download
