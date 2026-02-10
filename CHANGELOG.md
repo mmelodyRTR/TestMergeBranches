@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/mmelodyRTR/TestMergeBranches/compare/v1.1.0...v1.1.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* urgent bug fix ([#19](https://github.com/mmelodyRTR/TestMergeBranches/issues/19)) ([d55d17c](https://github.com/mmelodyRTR/TestMergeBranches/commit/d55d17c1a763e7943fe04ff4f3393d815d58f307))
+
 ## [1.1.0](https://github.com/mmelodyRTR/TestMergeBranches/compare/v1.0.0...v1.1.0) (2026-02-10)
 
 
