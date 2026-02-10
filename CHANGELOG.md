@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/mmelodyRTR/TestMergeBranches/compare/v1.0.0...v1.1.0) (2026-02-10)
+
+
+### Features
+
+* changes to improve POC ([fab8dd0](https://github.com/mmelodyRTR/TestMergeBranches/commit/fab8dd071f61498f7ea5c62ec336295f5c48f441))
+* changes to improve POC ([8914b94](https://github.com/mmelodyRTR/TestMergeBranches/commit/8914b9493ab00c4e61bd9e4568545ed862f5f801))
+
 ## 1.0.0 (2026-02-09)
 
 
