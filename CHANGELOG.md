@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/mmelodyRTR/TestMergeBranches/compare/v1.2.0...v1.3.0) (2026-02-11)
+
+
+### Features
+
+* Add new feature entry to README ([#24](https://github.com/mmelodyRTR/TestMergeBranches/issues/24)) ([2c19f47](https://github.com/mmelodyRTR/TestMergeBranches/commit/2c19f47a8732f2a02cf6197f63712dac9e38437a))
+
 ## [1.2.0](https://github.com/mmelodyRTR/TestMergeBranches/compare/v1.1.1...v1.2.0) (2026-02-10)
 
 
